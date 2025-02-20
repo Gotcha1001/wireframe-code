@@ -27,29 +27,10 @@ function ViewCode() {
   const [isReady, setIsReady] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [temporaryCode, setTemporaryCode] = useState("");
-  const [validationTimer, setValidationTimer] = useState<NodeJS.Timeout | null>(
-    null
-  );
 
   useEffect(() => {
     uid && GetRecordInfo(false);
-    return () => {
-      if (validationTimer) clearTimeout(validationTimer);
-    };
   }, [uid]);
-
-  const validateCode = (code: string): boolean => {
-    if (!code.trim()) return false;
-
-    // Check for the presence of export statement at the end
-    const lines = code.trim().split("\n");
-    const lastLines = lines.slice(-3).join("\n");
-
-    return (
-      lastLines.includes("export default") ||
-      lastLines.includes("module.exports")
-    );
-  };
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
@@ -118,25 +99,10 @@ function ViewCode() {
 
         if (done) {
           if (fullCode.trim()) {
-            if (validationTimer) clearTimeout(validationTimer);
-
-            const timer = setTimeout(async () => {
-              if (validateCode(fullCode)) {
-                await UpdateCodeToDb(record.uid, fullCode);
-                setCodeResp(fullCode);
-                setIsGenerating(false);
-                setIsReady(true);
-              } else {
-                // If validation fails, still show the code but log the issue
-                console.warn("Code might be incomplete, but proceeding anyway");
-                await UpdateCodeToDb(record.uid, fullCode);
-                setCodeResp(fullCode);
-                setIsGenerating(false);
-                setIsReady(true);
-              }
-            }, 5000); // Reduced to 5 seconds
-
-            setValidationTimer(timer);
+            await UpdateCodeToDb(record.uid, fullCode);
+            setCodeResp(fullCode);
+            setIsGenerating(false);
+            setIsReady(true);
           }
           break;
         }
