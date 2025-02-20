@@ -5,7 +5,6 @@ import axios from "axios";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-// Define types for our data structures
 interface CreditOption {
   credits: number;
   amount: number;
@@ -21,7 +20,7 @@ interface UserData {
 }
 
 const creditsOptions: CreditOption[] = [
-  { credits: 5, amount: 50 },
+  { credits: 5, amount: 10 },
   { credits: 10, amount: 100 },
   { credits: 20, amount: 200 },
   { credits: 50, amount: 500 },
@@ -63,9 +62,7 @@ function Credits() {
     try {
       const response = await fetch("/api/create-payment", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           amount: selectedOption.amount,
           credits: selectedOption.credits,
@@ -93,16 +90,18 @@ function Credits() {
 
   return (
     <div>
-      <h2 className="text-3xl font-bold gradient-title">Credits</h2>
+      <h2 className="text-4xl text-center font-bold bg-gradient-to-r from-indigo-500 via-purple-500 to-teal-400 text-transparent bg-clip-text">
+        Credits
+      </h2>
 
       {/* Current Credits Display */}
-      <div className="p-5 bg-slate-50 rounded-lg shadow-neon border border-teal-500 flex justify-between items-center mt-6">
+      <div className="p-5 bg-slate-50 rounded-lg shadow-lg border border-teal-500 flex justify-between items-center mt-6">
         <div>
           <h2 className="font-bold text-xl">My Credits:</h2>
           <p className="text-lg">{userData?.credits ?? 0} Credits Left</p>
         </div>
         <Button
-          variant="outline"
+          variant="sex1"
           onClick={() => setShowPaymentOptions(!showPaymentOptions)}
         >
           Buy More Credits
@@ -111,16 +110,16 @@ function Credits() {
 
       {/* Payment Options */}
       {showPaymentOptions && (
-        <div className="p-5 bg-slate-50 rounded-lg shadow-neon border border-teal-500 mt-6">
+        <div className="p-5 bg-slate-50 rounded-lg shadow-lg border border-teal-500 mt-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {creditsOptions.map((option, index) => (
               <div
                 key={index}
-                className={`p-4 rounded-lg border ${
+                className={`p-4 rounded-lg border relative cursor-pointer transition-all duration-300 ${
                   selectedOption?.credits === option.credits
-                    ? "border-teal-500 bg-teal-50"
-                    : "border-gray-200 hover:border-teal-300"
-                } cursor-pointer transition-all duration-200`}
+                    ? "border-teal-500 bg-gradient-to-br from-indigo-500 via-purple-500 to-teal-400 text-white shadow-lg"
+                    : "border-gray-200 hover:border-teal-300 hover:shadow-md"
+                }`}
                 onClick={() => setSelectedOption(option)}
               >
                 <div className="text-center">
@@ -136,7 +135,7 @@ function Credits() {
           {selectedOption && (
             <div className="mt-6 text-center">
               <Button
-                className="w-full md:w-auto px-8 py-2 bg-teal-500 hover:bg-teal-600 text-white"
+                className="w-full md:w-auto px-8 py-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-teal-400 hover:opacity-90 text-white rounded-lg"
                 onClick={initiatePayment}
               >
                 Pay R{selectedOption.amount} with PayFast
