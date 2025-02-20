@@ -9,53 +9,48 @@ import {
 import { amethyst } from "@codesandbox/sandpack-themes";
 import Constants from "@/data/Constants";
 
-function CodeEditor({ codeResp, isReady }: any) {
+function CodeEditor({ codeResp, isReady, isGenerating }: any) {
+  // When generating, only show the editor with the streaming code
+  if (isGenerating) {
+    return (
+      <div className="h-[840px] bg-[#232136] rounded-lg overflow-hidden">
+        <div className="h-full overflow-auto">
+          <pre className="p-4 text-white font-mono text-sm">{codeResp}</pre>
+        </div>
+      </div>
+    );
+  }
+
+  // When ready, show the full Sandpack environment
+  if (isReady) {
+    return (
+      <Sandpack
+        template="react"
+        options={{
+          externalResources: ["https://cdn.tailwindcss.com"],
+          showNavigator: true,
+          showTabs: true,
+          editorHeight: 840,
+        }}
+        customSetup={{
+          dependencies: {
+            ...Constants.DEPENDANCY,
+          },
+        }}
+        theme={amethyst}
+        files={{
+          "/App.js": `${codeResp}`,
+        }}
+      />
+    );
+  }
+
+  // Default state - empty editor
   return (
-    <div>
-      {isReady ? (
-        <Sandpack
-          template="react"
-          options={{
-            externalResources: ["https://cdn.tailwindcss.com"],
-            showNavigator: true,
-            showTabs: true,
-            editorHeight: 840,
-          }}
-          customSetup={{
-            dependencies: {
-              ...Constants.DEPENDANCY,
-            },
-          }}
-          theme={amethyst}
-          files={{
-            "/App.js": `${codeResp}`,
-          }}
-        />
-      ) : (
-        <SandpackProvider
-          template="react"
-          theme={amethyst}
-          files={{
-            "/app.js": {
-              code: `${codeResp}`,
-              active: true,
-            },
-          }}
-          customSetup={{
-            dependencies: {
-              ...Constants.DEPENDANCY,
-            },
-          }}
-          options={{
-            externalResources: ["https://cdn.tailwindcss.com"],
-          }}
-        >
-          <SandpackLayout>
-            <SandpackCodeEditor showTabs={true} style={{ height: "70vh" }} />
-            <SandpackPreview />
-          </SandpackLayout>
-        </SandpackProvider>
-      )}
+    <div className="h-[840px] bg-[#232136] rounded-lg overflow-hidden">
+      <div className="h-full flex items-center justify-center text-white">
+        Waiting for code...
+      </div>
     </div>
   );
 }

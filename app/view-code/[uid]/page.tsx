@@ -25,8 +25,8 @@ function ViewCode() {
   const [codeResp, setCodeResp] = useState("");
   const [record, setRecord] = useState<RECORD | null>();
   const [isReady, setIsReady] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [temporaryCode, setTemporaryCode] = useState("");
-  const [streamComplete, setStreamComplete] = useState(false);
 
   useEffect(() => {
     uid && GetRecordInfo(false);
@@ -37,7 +37,7 @@ function ViewCode() {
     setTemporaryCode("");
     setCodeResp("");
     setIsReady(false);
-    setStreamComplete(false);
+    setIsGenerating(false);
 
     try {
       const result = await axios.get("/api/wireframe-to-code?uid=" + uid);
@@ -71,6 +71,7 @@ function ViewCode() {
 
   const GenerateCode = async (record: RECORD) => {
     setLoading(true);
+    setIsGenerating(true);
     let fullCode = "";
 
     try {
@@ -97,12 +98,10 @@ function ViewCode() {
         const { done, value } = await reader.read();
 
         if (done) {
-          // Stream is complete
-          setStreamComplete(true);
-          // Only update final code and database if we have complete code
           if (fullCode.trim()) {
             await UpdateCodeToDb(record.uid, fullCode);
             setCodeResp(fullCode);
+            setIsGenerating(false);
             setIsReady(true);
           }
           break;
@@ -158,13 +157,11 @@ function ViewCode() {
           />
         </div>
         <div className="col-span-4">
-          {loading ? (
+          {loading && !isGenerating ? (
             <div className="flex flex-col items-center text-center p-20 gradient-background2 h-[80vh] rounded-xl">
               <LoaderCircle className="animate-spin text-indigo-500 h-20 w-20 mb-4" />
               <h2 className="font-bold text-4xl gradient-title">
-                {temporaryCode && !streamComplete
-                  ? "Generating Code..."
-                  : "Analyzing The Wireframe..."}
+                Analyzing The Wireframe...
               </h2>
               <Image
                 className="mt-10 rounded-lg"
@@ -175,7 +172,11 @@ function ViewCode() {
               />
             </div>
           ) : (
-            <CodeEditor codeResp={codeResp} isReady={isReady} />
+            <CodeEditor
+              codeResp={isGenerating ? temporaryCode : codeResp}
+              isReady={isReady}
+              isGenerating={isGenerating}
+            />
           )}
         </div>
       </div>
