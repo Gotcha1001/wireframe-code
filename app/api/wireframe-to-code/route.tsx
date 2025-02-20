@@ -48,16 +48,18 @@ export async function GET(req: NextRequest) {
       .select()
       .from(WireframeToCodeTable)
       .where(eq(WireframeToCodeTable.uid, uid));
-    return NextResponse.json(result[0]);
+    return new NextResponse(JSON.stringify(result[0]), { status: 200 });
   } else if (email) {
     const result = await db
       .select()
       .from(WireframeToCodeTable)
       .where(eq(WireframeToCodeTable.createdBy, email));
-    return NextResponse.json(result);
+    return new NextResponse(JSON.stringify(result), { status: 200 });
   }
 
-  return NextResponse.json({ error: "No Record Found..." });
+  return new NextResponse(JSON.stringify({ error: "No Record Found..." }), {
+    status: 404,
+  });
 }
 
 export async function PUT(req: NextRequest) {
