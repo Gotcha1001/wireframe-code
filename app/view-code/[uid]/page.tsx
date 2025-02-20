@@ -4,7 +4,6 @@ import Constants from "@/data/Constants";
 import axios from "axios";
 import { LoaderCircle } from "lucide-react";
 import { useParams } from "next/navigation";
-
 import React, { useEffect, useState } from "react";
 import SelectionDetail from "./_components/SelectionDetail";
 import CodeEditor from "./_components/CodeEditor";
@@ -26,8 +25,8 @@ function ViewCode() {
   const [codeResp, setCodeResp] = useState("");
   const [record, setRecord] = useState<RECORD | null>();
   const [isReady, setIsReady] = useState(false);
-  // New state to hold temporary code during generation
   const [temporaryCode, setTemporaryCode] = useState("");
+  const [streamComplete, setStreamComplete] = useState(false);
 
   useEffect(() => {
     uid && GetRecordInfo(false);
@@ -35,13 +34,13 @@ function ViewCode() {
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
-    setTemporaryCode(""); // Reset temporary code
-    setCodeResp(""); // Reset code output
-    setIsReady(false); // Reset ready state
+    setTemporaryCode("");
+    setCodeResp("");
+    setIsReady(false);
+    setStreamComplete(false);
 
     try {
       const result = await axios.get("/api/wireframe-to-code?uid=" + uid);
-      console.log(result.data);
       const resp = result?.data;
 
       if (!resp) {
@@ -50,9 +49,8 @@ function ViewCode() {
         return;
       }
 
-      setRecord(resp); // Update record state
+      setRecord(resp);
 
-      // If forceRegenerate is true OR code is null, generate new code
       if (forceRegenerate || resp?.code == null) {
         await GenerateCode(resp);
       } else {
@@ -68,17 +66,12 @@ function ViewCode() {
 
   const handleRegenerateCode = async () => {
     if (!record) return;
-
-    setLoading(true);
-    setTemporaryCode(""); // Reset temporary code
-    setCodeResp("");
-    setIsReady(false);
-
-    await GenerateCode(record);
+    await GetRecordInfo(true);
   };
 
   const GenerateCode = async (record: RECORD) => {
     setLoading(true);
+    let fullCode = "";
 
     try {
       const res = await fetch("/api/ai-model", {
@@ -97,13 +90,23 @@ function ViewCode() {
         return;
       }
 
-      let newCodeResp = "";
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+
+        if (done) {
+          // Stream is complete
+          setStreamComplete(true);
+          // Only update final code and database if we have complete code
+          if (fullCode.trim()) {
+            await UpdateCodeToDb(record.uid, fullCode);
+            setCodeResp(fullCode);
+            setIsReady(true);
+          }
+          break;
+        }
 
         const text = decoder
           .decode(value)
@@ -113,20 +116,12 @@ function ViewCode() {
           .replace("jsx", "")
           .replace("js", "");
 
-        newCodeResp += text;
-        // Update temporaryCode instead of codeResp during streaming
-        setTemporaryCode(newCodeResp);
+        fullCode += text;
+        setTemporaryCode(fullCode);
       }
-
-      // Once generation is complete, update the actual codeResp
-      setCodeResp(newCodeResp);
-      setIsReady(true);
-      setLoading(false);
-
-      // Update DB with complete new code
-      await UpdateCodeToDb(record.uid, newCodeResp);
     } catch (error) {
       console.error("Error generating code:", error);
+    } finally {
       setLoading(false);
     }
   };
@@ -156,7 +151,6 @@ function ViewCode() {
       <AppHeader hideSidebar={true} />
       <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
         <div>
-          {/*Selection Details  */}
           <SelectionDetail
             regenerateCode={handleRegenerateCode}
             record={record}
@@ -164,21 +158,14 @@ function ViewCode() {
           />
         </div>
         <div className="col-span-4">
-          {/* Code Editor */}
           {loading ? (
             <div className="flex flex-col items-center text-center p-20 gradient-background2 h-[80vh] rounded-xl">
               <LoaderCircle className="animate-spin text-indigo-500 h-20 w-20 mb-4" />
               <h2 className="font-bold text-4xl gradient-title">
-                {temporaryCode
-                  ? "Regenerating Code..."
+                {temporaryCode && !streamComplete
+                  ? "Generating Code..."
                   : "Analyzing The Wireframe..."}
               </h2>
-              {/* Display streaming code in a non-interactive preview */}
-              {/* {temporaryCode && (
-                <div className="mt-6 w-full max-w-4xl bg-gray-900 text-gray-300 p-4 rounded overflow-y-auto h-64 text-sm font-mono text-left">
-                  <pre>{temporaryCode}</pre>
-                </div>
-              )} */}
               <Image
                 className="mt-10 rounded-lg"
                 src="/cancel.jpg"
@@ -188,7 +175,6 @@ function ViewCode() {
               />
             </div>
           ) : (
-            // Only pass code to the editor when isReady is true
             <CodeEditor codeResp={codeResp} isReady={isReady} />
           )}
         </div>
