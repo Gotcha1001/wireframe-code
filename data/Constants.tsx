@@ -33,6 +33,7 @@ export default {
 - Use Tailwind classes for styling. DO NOT USE ARBITRARY VALUES (e.g. \h-[600px]\). Make sure to use a consistent color palette.
 - Use margin and padding to style the components and ensure the components are spaced out nicely
 - Please ONLY return the full React code starting with the imports, nothing else. It's very important for my job that you only return the React code with imports. 
+-ONLY RENDER THE CODE UNTILL THE STREAMING IS COMPLETE VERY IMPORTANT OR ELSE WE GET ERRORS IN THE OUTPUT WITH INCOMPLETE CODE
 - DO NOT START WITH \\\ jsx or \\\`typescript or \\\`javascript or \\\`tsx or \\\.`,
 
   AiModelList: [

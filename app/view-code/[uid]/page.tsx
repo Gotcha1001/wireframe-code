@@ -4,6 +4,7 @@ import Constants from "@/data/Constants";
 import axios from "axios";
 import { LoaderCircle } from "lucide-react";
 import { useParams } from "next/navigation";
+
 import React, { useEffect, useState } from "react";
 import SelectionDetail from "./_components/SelectionDetail";
 import CodeEditor from "./_components/CodeEditor";
@@ -23,9 +24,9 @@ function ViewCode() {
   const { uid } = useParams();
   const [loading, setLoading] = useState(false);
   const [codeResp, setCodeResp] = useState("");
-  const [record, setRecord] = useState<RECORD | null>(null);
+  const [record, setRecord] = useState<RECORD | null>();
   const [isReady, setIsReady] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
+  // New state to hold temporary code during generation
   const [temporaryCode, setTemporaryCode] = useState("");
 
   useEffect(() => {
@@ -34,13 +35,13 @@ function ViewCode() {
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
-    setTemporaryCode("");
-    setCodeResp("");
-    setIsReady(false);
-    setIsGenerating(false);
+    setTemporaryCode(""); // Reset temporary code
+    setCodeResp(""); // Reset code output
+    setIsReady(false); // Reset ready state
 
     try {
-      const result = await axios.get(`/api/wireframe-to-code?uid=${uid}`);
+      const result = await axios.get("/api/wireframe-to-code?uid=" + uid);
+      console.log(result.data);
       const resp = result?.data;
 
       if (!resp) {
@@ -49,9 +50,9 @@ function ViewCode() {
         return;
       }
 
-      setRecord(resp);
+      setRecord(resp); // Update record state
 
-      // If the record code is not found or needs to be regenerated
+      // If forceRegenerate is true OR code is null, generate new code
       if (forceRegenerate || resp?.code == null) {
         await GenerateCode(resp);
       } else {
@@ -67,14 +68,17 @@ function ViewCode() {
 
   const handleRegenerateCode = async () => {
     if (!record) return;
-    await GetRecordInfo(true);
+
+    setLoading(true);
+    setTemporaryCode(""); // Reset temporary code
+    setCodeResp("");
+    setIsReady(false);
+
+    await GenerateCode(record);
   };
 
   const GenerateCode = async (record: RECORD) => {
     setLoading(true);
-    setIsGenerating(true);
-    let fullCode = "";
-
     try {
       const res = await fetch("/api/ai-model", {
         method: "POST",
@@ -92,34 +96,33 @@ function ViewCode() {
         return;
       }
 
+      let newCodeResp = "";
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let done = false;
 
-      // Process the stream until fully done
-      let doneReading = false;
-      while (!doneReading) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          doneReading = true; // Indicate that all chunks are processed
-          if (fullCode.trim()) {
-            await UpdateCodeToDb(record.uid, fullCode);
-            setCodeResp(fullCode);
-            setIsGenerating(false);
-            setIsReady(true);
-          }
-        } else {
-          const text = decoder
-            .decode(value, { stream: true }) // Ensure proper chunk handling
+      while (!done) {
+        const { value, done: streamDone } = await reader.read();
+        done = streamDone;
+        if (value) {
+          const text = decoder.decode(value);
+          newCodeResp += text
             .replace("```typescript", "")
             .replace("javascript", "")
             .replace("```", "")
             .replace("jsx", "")
             .replace("js", "");
 
-          fullCode += text;
-          setTemporaryCode(fullCode); // Update the code continuously as it's being generated
+          setTemporaryCode(newCodeResp); // Update as it streams
         }
+      }
+
+      if (newCodeResp.trim().length > 0) {
+        setCodeResp(newCodeResp);
+        setIsReady(true);
+        await UpdateCodeToDb(record.uid, newCodeResp);
+      } else {
+        console.error("Generated code is empty.");
       }
     } catch (error) {
       console.error("Error generating code:", error);
@@ -153,6 +156,7 @@ function ViewCode() {
       <AppHeader hideSidebar={true} />
       <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
         <div>
+          {/* Selection Details */}
           <SelectionDetail
             regenerateCode={handleRegenerateCode}
             record={record}
@@ -160,11 +164,14 @@ function ViewCode() {
           />
         </div>
         <div className="col-span-4">
-          {loading && !isGenerating ? (
+          {/* Code Editor */}
+          {loading ? (
             <div className="flex flex-col items-center text-center p-20 gradient-background2 h-[80vh] rounded-xl">
               <LoaderCircle className="animate-spin text-indigo-500 h-20 w-20 mb-4" />
               <h2 className="font-bold text-4xl gradient-title">
-                Analyzing The Wireframe...
+                {temporaryCode
+                  ? "Regenerating Code..."
+                  : "Analyzing The Wireframe..."}
               </h2>
               <Image
                 className="mt-10 rounded-lg"
@@ -174,12 +181,12 @@ function ViewCode() {
                 width={600}
               />
             </div>
+          ) : isReady && codeResp ? (
+            <CodeEditor codeResp={codeResp} isReady={isReady} />
           ) : (
-            <CodeEditor
-              codeResp={isGenerating ? temporaryCode : codeResp}
-              isReady={isReady}
-              isGenerating={isGenerating}
-            />
+            <div className="flex items-center justify-center h-[80vh] text-2xl gradient-title text-center gradient-background2 p-3 rounded-lg text-indigo-500">
+              No code available. Try regenerating.
+            </div>
           )}
         </div>
       </div>
