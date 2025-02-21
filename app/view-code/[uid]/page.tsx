@@ -4,7 +4,6 @@ import Constants from "@/data/Constants";
 import axios from "axios";
 import { LoaderCircle } from "lucide-react";
 import { useParams } from "next/navigation";
-
 import React, { useEffect, useState } from "react";
 import SelectionDetail from "./_components/SelectionDetail";
 import CodeEditor from "./_components/CodeEditor";
@@ -26,9 +25,9 @@ function ViewCode() {
   const [codeResp, setCodeResp] = useState("");
   const [record, setRecord] = useState<RECORD | null>();
   const [isReady, setIsReady] = useState(false);
-  // New state to hold temporary code during generation
   const [temporaryCode, setTemporaryCode] = useState("");
   const [retryCount, setRetryCount] = useState(0);
+  const [isRetrying, setIsRetrying] = useState(false);
   const maxRetries = 3;
 
   useEffect(() => {
@@ -37,13 +36,12 @@ function ViewCode() {
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
-    setTemporaryCode(""); // Reset temporary code
-    setCodeResp(""); // Reset code output
-    setIsReady(false); // Reset ready state
+    setTemporaryCode("");
+    setCodeResp("");
+    setIsReady(false);
 
     try {
       const result = await axios.get("/api/wireframe-to-code?uid=" + uid);
-      console.log(result.data);
       const resp = result?.data;
 
       if (!resp) {
@@ -52,9 +50,8 @@ function ViewCode() {
         return;
       }
 
-      setRecord(resp); // Update record state
+      setRecord(resp);
 
-      // If forceRegenerate is true OR code is null, generate new code
       if (forceRegenerate || resp?.code == null) {
         await GenerateCode(resp);
       } else {
@@ -71,12 +68,33 @@ function ViewCode() {
   const handleRegenerateCode = async () => {
     if (!record) return;
 
+    // Reset retry count when manually regenerating
+    setRetryCount(0);
+    setIsRetrying(false);
+
     setLoading(true);
-    setTemporaryCode(""); // Reset temporary code
+    setTemporaryCode("");
     setCodeResp("");
     setIsReady(false);
 
     await GenerateCode(record);
+  };
+
+  const handleAutoRetry = async () => {
+    if (retryCount >= maxRetries || !record || isRetrying) {
+      console.error("Max retry attempts reached or retry already in progress");
+      return;
+    }
+
+    setIsRetrying(true);
+    setRetryCount((prev) => prev + 1);
+    console.log(`Attempting retry ${retryCount + 1} of ${maxRetries}`);
+
+    try {
+      await GenerateCode(record);
+    } finally {
+      setIsRetrying(false);
+    }
   };
 
   const GenerateCode = async (record: RECORD) => {
@@ -115,7 +133,7 @@ function ViewCode() {
             .replace("jsx", "")
             .replace("js", "");
 
-          setTemporaryCode(newCodeResp); // Update as it streams
+          setTemporaryCode(newCodeResp);
         }
       }
 
@@ -125,9 +143,15 @@ function ViewCode() {
         await UpdateCodeToDb(record.uid, newCodeResp);
       } else {
         console.error("Generated code is empty.");
+        if (!isRetrying) {
+          handleAutoRetry();
+        }
       }
     } catch (error) {
       console.error("Error generating code:", error);
+      if (!isRetrying) {
+        handleAutoRetry();
+      }
     } finally {
       setLoading(false);
     }
@@ -153,24 +177,11 @@ function ViewCode() {
     }
   };
 
-  const handleAutoRetry = () => {
-    if (retryCount < maxRetries) {
-      console.warn(`Retrying code generation... Attempt ${retryCount + 1}`);
-      setRetryCount(retryCount + 1);
-      handleRegenerateCode();
-    } else {
-      console.error(
-        "Max retry attempts reached. Please check the AI response."
-      );
-    }
-  };
-
   return (
     <div>
       <AppHeader hideSidebar={true} />
       <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
         <div>
-          {/* Selection Details */}
           <SelectionDetail
             regenerateCode={handleRegenerateCode}
             record={record}
@@ -178,13 +189,12 @@ function ViewCode() {
           />
         </div>
         <div className="col-span-4">
-          {/* Code Editor */}
           {loading ? (
             <div className="flex flex-col items-center text-center p-20 gradient-background2 h-[80vh] rounded-xl">
               <LoaderCircle className="animate-spin text-indigo-500 h-20 w-20 mb-4" />
               <h2 className="font-bold text-4xl gradient-title">
                 {temporaryCode
-                  ? "Regenerating Code..."
+                  ? `${isRetrying ? "Retrying" : "Regenerating"} Code...`
                   : "Analyzing The Wireframe..."}
               </h2>
               <Image

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Sandpack,
   SandpackCodeEditor,
@@ -9,13 +9,45 @@ import {
 import { amethyst } from "@codesandbox/sandpack-themes";
 import Constants from "@/data/Constants";
 
+interface CodeEditorProps {
+  codeResp: string;
+  isReady: boolean;
+  isGenerating: boolean;
+  onRetry: () => void;
+}
+
 export default function CodeEditor({
   codeResp,
   isReady,
   isGenerating,
   onRetry,
-}: any) {
-  // When generating, only show the editor with the streaming code
+}: CodeEditorProps) {
+  const [hasError, setHasError] = useState(false);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const MAX_RETRIES = 3;
+
+  // Reset error state when new code arrives
+  useEffect(() => {
+    if (codeResp) {
+      setHasError(false);
+    }
+  }, [codeResp]);
+
+  // Handle sandbox errors
+  const handleSandpackError = (error: Error) => {
+    console.error("Sandbox error detected:", error);
+    setHasError(true);
+
+    if (retryAttempt < MAX_RETRIES) {
+      setRetryAttempt((prev) => prev + 1);
+      // Add a slight delay before retrying
+      setTimeout(() => {
+        onRetry();
+      }, 2000);
+    }
+  };
+
+  // When generating, show the streaming code
   if (isGenerating) {
     return (
       <div className="h-[840px] bg-[#130d45] rounded-lg overflow-hidden">
@@ -26,17 +58,14 @@ export default function CodeEditor({
     );
   }
 
-  // If ready, try rendering the code
-  if (isReady) {
+  // If ready and no errors, try rendering the code
+  if (isReady && !hasError) {
     try {
       return (
-        <Sandpack
+        <SandpackProvider
           template="react"
           options={{
             externalResources: ["https://cdn.tailwindcss.com"],
-            showNavigator: true,
-            showTabs: true,
-            editorHeight: 840,
           }}
           customSetup={{
             dependencies: {
@@ -45,22 +74,37 @@ export default function CodeEditor({
           }}
           theme={amethyst}
           files={{
-            "/App.js": `${codeResp}`,
+            "/App.js": codeResp,
           }}
-        />
+        >
+          <SandpackLayout>
+            <SandpackCodeEditor />
+            <SandpackPreview />
+          </SandpackLayout>
+        </SandpackProvider>
       );
     } catch (error) {
-      console.error("Sandbox error detected:", error);
-
-      // Trigger a retry if an error occurs
-      onRetry?.();
-
-      return (
-        <div className="h-[840px] bg-red-500 text-white flex items-center justify-center">
-          <p>⚠️ Error detected. Retrying code generation...</p>
-        </div>
-      );
+      handleSandpackError(error as Error);
     }
+  }
+
+  // Show error state with retry count
+  if (hasError) {
+    return (
+      <div className="h-[840px] bg-red-500 text-white flex flex-col items-center justify-center space-y-4">
+        <p className="text-xl">⚠️ Error detected in code generation</p>
+        {retryAttempt < MAX_RETRIES ? (
+          <>
+            <p>
+              Retrying... Attempt {retryAttempt + 1} of {MAX_RETRIES}
+            </p>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
+          </>
+        ) : (
+          <p>Max retries reached. Please try manual regeneration.</p>
+        )}
+      </div>
+    );
   }
 
   // Default state - empty editor
