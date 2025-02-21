@@ -1,13 +1,13 @@
 "use client";
-import React, { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import axios from "axios";
-import { LoaderCircle } from "lucide-react";
-import Image from "next/image";
 import AppHeader from "@/app/_components/AppHeader";
 import Constants from "@/data/Constants";
+import axios from "axios";
+import { LoaderCircle } from "lucide-react";
+import { useParams } from "next/navigation";
+import React, { useEffect, useState } from "react";
 import SelectionDetail from "./_components/SelectionDetail";
 import CodeEditor from "./_components/CodeEditor";
+import Image from "next/image";
 
 export interface RECORD {
   id: number;
@@ -19,23 +19,14 @@ export interface RECORD {
   uid: string;
 }
 
-interface GenerationState {
-  isComplete: boolean;
-  code: string;
-}
-
 function ViewCode() {
   const { uid } = useParams();
   const [loading, setLoading] = useState(false);
   const [codeResp, setCodeResp] = useState("");
-  const [record, setRecord] = useState<RECORD | null>();
+  const [record, setRecord] = useState<RECORD | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [temporaryCode, setTemporaryCode] = useState("");
-  const [generationState, setGenerationState] = useState<GenerationState>({
-    isComplete: false,
-    code: "",
-  });
 
   useEffect(() => {
     uid && GetRecordInfo(false);
@@ -43,10 +34,13 @@ function ViewCode() {
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
-    resetState();
+    setTemporaryCode("");
+    setCodeResp("");
+    setIsReady(false);
+    setIsGenerating(false);
 
     try {
-      const result = await axios.get("/api/wireframe-to-code?uid=" + uid);
+      const result = await axios.get(`/api/wireframe-to-code?uid=${uid}`);
       const resp = result?.data;
 
       if (!resp) {
@@ -57,6 +51,7 @@ function ViewCode() {
 
       setRecord(resp);
 
+      // If the record code is not found or needs to be regenerated
       if (forceRegenerate || resp?.code == null) {
         await GenerateCode(resp);
       } else {
@@ -68,14 +63,6 @@ function ViewCode() {
       console.error("Error fetching record:", error);
       setLoading(false);
     }
-  };
-
-  const resetState = () => {
-    setTemporaryCode("");
-    setCodeResp("");
-    setIsReady(false);
-    setIsGenerating(false);
-    setGenerationState({ isComplete: false, code: "" });
   };
 
   const handleRegenerateCode = async () => {
@@ -112,13 +99,7 @@ function ViewCode() {
         const { done, value } = await reader.read();
 
         if (done) {
-          // Only save and update UI if we have valid code
           if (fullCode.trim()) {
-            setGenerationState({
-              isComplete: true,
-              code: fullCode,
-            });
-            // Only now do we save to the database
             await UpdateCodeToDb(record.uid, fullCode);
             setCodeResp(fullCode);
             setIsGenerating(false);
@@ -136,14 +117,10 @@ function ViewCode() {
           .replace("js", "");
 
         fullCode += text;
-        setTemporaryCode(fullCode);
+        setTemporaryCode(fullCode); // Update temporary code as it's being generated
       }
     } catch (error) {
       console.error("Error generating code:", error);
-      setGenerationState({
-        isComplete: false,
-        code: "",
-      });
     } finally {
       setLoading(false);
     }
@@ -163,11 +140,9 @@ function ViewCode() {
         codeResp: codeToSave,
         forcedUpdate: true,
       });
-
-      return result.data;
+      console.log("Update result:", result.data);
     } catch (error) {
       console.error("Error updating code:", error);
-      throw error;
     }
   };
 
@@ -179,7 +154,7 @@ function ViewCode() {
           <SelectionDetail
             regenerateCode={handleRegenerateCode}
             record={record}
-            isReady={isReady && generationState.isComplete}
+            isReady={isReady}
           />
         </div>
         <div className="col-span-4">
@@ -200,7 +175,7 @@ function ViewCode() {
           ) : (
             <CodeEditor
               codeResp={isGenerating ? temporaryCode : codeResp}
-              isReady={isReady && generationState.isComplete}
+              isReady={isReady}
               isGenerating={isGenerating}
             />
           )}
