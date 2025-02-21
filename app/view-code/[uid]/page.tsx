@@ -1,13 +1,13 @@
 "use client";
-import AppHeader from "@/app/_components/AppHeader";
-import Constants from "@/data/Constants";
+import React, { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import axios from "axios";
 import { LoaderCircle } from "lucide-react";
-import { useParams } from "next/navigation";
-import React, { useEffect, useState } from "react";
+import Image from "next/image";
+import AppHeader from "@/app/_components/AppHeader";
+import Constants from "@/data/Constants";
 import SelectionDetail from "./_components/SelectionDetail";
 import CodeEditor from "./_components/CodeEditor";
-import Image from "next/image";
 
 export interface RECORD {
   id: number;
@@ -21,23 +21,30 @@ export interface RECORD {
 
 function ViewCode() {
   const { uid } = useParams();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Start with loading true
   const [codeResp, setCodeResp] = useState("");
   const [record, setRecord] = useState<RECORD | null>();
   const [isReady, setIsReady] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [temporaryCode, setTemporaryCode] = useState("");
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
 
   useEffect(() => {
-    uid && GetRecordInfo(false);
-  }, [uid]);
+    if (uid && !initialLoadComplete) {
+      GetRecordInfo(false);
+      setInitialLoadComplete(true);
+    }
+  }, [uid, initialLoadComplete]);
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
-    setTemporaryCode("");
-    setCodeResp("");
-    setIsReady(false);
-    setIsGenerating(false);
+
+    if (forceRegenerate) {
+      setTemporaryCode("");
+      setCodeResp("");
+      setIsReady(false);
+      setIsGenerating(false);
+    }
 
     try {
       const result = await axios.get("/api/wireframe-to-code?uid=" + uid);
@@ -51,10 +58,11 @@ function ViewCode() {
 
       setRecord(resp);
 
-      if (forceRegenerate || resp?.code == null) {
+      if (forceRegenerate || !resp?.code?.resp) {
         await GenerateCode(resp);
       } else {
-        setCodeResp(resp?.code?.resp);
+        // Existing code found
+        setCodeResp(resp.code.resp);
         setIsReady(true);
         setLoading(false);
       }
@@ -139,9 +147,11 @@ function ViewCode() {
         codeResp: codeToSave,
         forcedUpdate: true,
       });
-      console.log("Update result:", result.data);
+
+      return result.data;
     } catch (error) {
       console.error("Error updating code:", error);
+      throw error;
     }
   };
 
@@ -161,7 +171,7 @@ function ViewCode() {
             <div className="flex flex-col items-center text-center p-20 gradient-background2 h-[80vh] rounded-xl">
               <LoaderCircle className="animate-spin text-indigo-500 h-20 w-20 mb-4" />
               <h2 className="font-bold text-4xl gradient-title">
-                Analyzing The Wireframe...
+                Loading Code...
               </h2>
               <Image
                 className="mt-10 rounded-lg"

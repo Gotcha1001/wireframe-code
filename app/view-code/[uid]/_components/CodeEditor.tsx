@@ -13,7 +13,7 @@ function CodeEditor({ codeResp, isReady, isGenerating }: any) {
   // When generating, only show the editor with the streaming code
   if (isGenerating) {
     return (
-      <div className="h-[840px] bg-[#232136] rounded-lg overflow-hidden">
+      <div className="h-[840px] bg-[#1a135b] rounded-lg overflow-hidden">
         <div className="h-full overflow-auto">
           <pre className="p-4 text-white font-mono text-sm">{codeResp}</pre>
         </div>
@@ -22,7 +22,7 @@ function CodeEditor({ codeResp, isReady, isGenerating }: any) {
   }
 
   // When ready, show the full Sandpack environment
-  if (isReady) {
+  if (isReady && codeResp) {
     return (
       <Sandpack
         template="react"
@@ -47,7 +47,7 @@ function CodeEditor({ codeResp, isReady, isGenerating }: any) {
 
   // Default state - empty editor
   return (
-    <div className="h-[840px] bg-[#232136] rounded-lg overflow-hidden">
+    <div className="h-[840px] bg-[#1d1469] rounded-lg overflow-hidden">
       <div className="h-full flex items-center justify-center text-white">
         Waiting for code...
       </div>
