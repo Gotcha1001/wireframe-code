@@ -13,7 +13,7 @@ function CodeEditor({ codeResp, isReady, isGenerating }: any) {
   // When generating, only show the editor with the streaming code
   if (isGenerating) {
     return (
-      <div className="h-[840px] bg-[#232136] rounded-lg overflow-hidden">
+      <div className="h-[840px] bg-[#130d45] rounded-lg overflow-hidden">
         <div className="h-full overflow-auto">
           <pre className="p-4 text-white font-mono text-sm">{codeResp}</pre>
         </div>
@@ -47,7 +47,7 @@ function CodeEditor({ codeResp, isReady, isGenerating }: any) {
 
   // Default state - empty editor
   return (
-    <div className="h-[840px] bg-[#232136] rounded-lg overflow-hidden">
+    <div className="h-[840px] bg-[#191259] rounded-lg overflow-hidden">
       <div className="h-full flex items-center justify-center text-white">
         Waiting for code...
       </div>

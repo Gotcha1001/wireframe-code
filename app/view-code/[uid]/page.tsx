@@ -95,36 +95,36 @@ function ViewCode() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
 
-      while (true) {
+      // Process the stream until fully done
+      let doneReading = false;
+      while (!doneReading) {
         const { done, value } = await reader.read();
 
-        // When done, update the database and state
         if (done) {
+          doneReading = true; // Indicate that all chunks are processed
           if (fullCode.trim()) {
-            await UpdateCodeToDb(record.uid, fullCode); // Save to DB
-            setCodeResp(fullCode); // Update the state with full code
-            setIsGenerating(false); // End the generating state
-            setIsReady(true); // Mark as ready to display
+            await UpdateCodeToDb(record.uid, fullCode);
+            setCodeResp(fullCode);
+            setIsGenerating(false);
+            setIsReady(true);
           }
-          break; // Exit the loop when done
+        } else {
+          const text = decoder
+            .decode(value, { stream: true }) // Ensure proper chunk handling
+            .replace("```typescript", "")
+            .replace("javascript", "")
+            .replace("```", "")
+            .replace("jsx", "")
+            .replace("js", "");
+
+          fullCode += text;
+          setTemporaryCode(fullCode); // Update the code continuously as it's being generated
         }
-
-        // Process the chunk and update temporary code for UI
-        const text = decoder
-          .decode(value)
-          .replace("```typescript", "")
-          .replace("javascript", "")
-          .replace("```", "")
-          .replace("jsx", "")
-          .replace("js", "");
-
-        fullCode += text;
-        setTemporaryCode(fullCode); // Continuously update the UI with generated code
       }
     } catch (error) {
       console.error("Error generating code:", error);
     } finally {
-      setLoading(false); // Stop loading in case of any error
+      setLoading(false);
     }
   };
 
