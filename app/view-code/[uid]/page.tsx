@@ -23,12 +23,12 @@ function ViewCode() {
   const { uid } = useParams();
   const [loading, setLoading] = useState(false);
   const [codeResp, setCodeResp] = useState("");
-  const [record, setRecord] = useState<RECORD | null>();
+  const [record, setRecord] = useState<RECORD | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [temporaryCode, setTemporaryCode] = useState("");
-  const [retryCount, setRetryCount] = useState(0);
-  const [isRetrying, setIsRetrying] = useState(false);
-  const maxRetries = 3;
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [generationError, setGenerationError] = useState("");
 
   useEffect(() => {
     uid && GetRecordInfo(false);
@@ -39,9 +39,12 @@ function ViewCode() {
     setTemporaryCode("");
     setCodeResp("");
     setIsReady(false);
+    setIsGenerating(false);
+    setGenerationError("");
+    setGenerationProgress(0);
 
     try {
-      const result = await axios.get("/api/wireframe-to-code?uid=" + uid);
+      const result = await axios.get(`/api/wireframe-to-code?uid=${uid}`);
       const resp = result?.data;
 
       if (!resp) {
@@ -52,6 +55,7 @@ function ViewCode() {
 
       setRecord(resp);
 
+      // If the record code is not found or needs to be regenerated
       if (forceRegenerate || resp?.code == null) {
         await GenerateCode(resp);
       } else {
@@ -61,98 +65,190 @@ function ViewCode() {
       }
     } catch (error) {
       console.error("Error fetching record:", error);
+      setGenerationError("Failed to fetch record information.");
       setLoading(false);
     }
   };
 
   const handleRegenerateCode = async () => {
     if (!record) return;
-
-    // Reset retry count when manually regenerating
-    setRetryCount(0);
-    setIsRetrying(false);
-
-    setLoading(true);
-    setTemporaryCode("");
-    setCodeResp("");
-    setIsReady(false);
-
-    await GenerateCode(record);
+    await GetRecordInfo(true);
   };
 
-  const handleAutoRetry = async () => {
-    if (retryCount >= maxRetries || !record || isRetrying) {
-      console.error("Max retry attempts reached or retry already in progress");
-      return;
-    }
-
-    setIsRetrying(true);
-    setRetryCount((prev) => prev + 1);
-    console.log(`Attempting retry ${retryCount + 1} of ${maxRetries}`);
-
+  // Keep-alive helper function
+  const pingServer = async () => {
     try {
-      await GenerateCode(record);
-    } finally {
-      setIsRetrying(false);
+      await fetch("/api/ping", {
+        method: "GET",
+        headers: { "Cache-Control": "no-cache" },
+      });
+    } catch (e) {
+      console.log("Keep-alive ping error:", e);
     }
   };
 
   const GenerateCode = async (record: RECORD) => {
     setLoading(true);
+    setIsGenerating(true);
+    setGenerationError("");
+    let fullCode = "";
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+
+    // Set up keep-alive ping to prevent connection timeouts
+    const keepAliveInterval = setInterval(pingServer, 30000); // Every 30 seconds
+
+    const attemptGeneration = async () => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
+
+        const res = await fetch("/api/ai-model", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Connection: "keep-alive",
+          },
+          body: JSON.stringify({
+            description: record?.description + ":" + Constants.PROMPT,
+            model: record.model,
+            imageUrl: record?.imageUrl,
+            cacheBuster: new Date().getTime(),
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          throw new Error(`API responded with status: ${res.status}`);
+        }
+
+        if (!res.body) {
+          throw new Error("Response body is null");
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+
+        // Process the stream with timeout protection
+        let doneReading = false;
+        let lastChunkTime = Date.now();
+        let receivedChunks = 0;
+
+        while (!doneReading) {
+          // Check for stream inactivity timeout
+          if (Date.now() - lastChunkTime > 45000) {
+            // 45 seconds without data
+            if (fullCode.length > 500) {
+              // We have substantial code, save what we have and exit
+              console.log(
+                "Stream timeout but substantial code received. Saving partial result."
+              );
+              break;
+            } else {
+              throw new Error(
+                "Stream timeout - no data received for 45 seconds"
+              );
+            }
+          }
+
+          const { done, value } = await reader.read();
+          lastChunkTime = Date.now();
+
+          if (done) {
+            doneReading = true;
+          } else {
+            receivedChunks++;
+            const text = decoder
+              .decode(value, { stream: true })
+              .replace("```typescript", "")
+              .replace("javascript", "")
+              .replace("```", "")
+              .replace("jsx", "")
+              .replace("js", "");
+
+            fullCode += text;
+            setTemporaryCode(fullCode);
+
+            // Update progress based on lines (rough estimate)
+            const lineCount = fullCode.split("\n").length;
+            const estimatedProgress = Math.min(
+              95,
+              Math.floor((lineCount / 300) * 100)
+            );
+            setGenerationProgress(estimatedProgress);
+
+            // Log progress periodically
+            if (receivedChunks % 20 === 0) {
+              console.log(
+                `Received ${receivedChunks} chunks, ~${lineCount} lines of code`
+              );
+            }
+          }
+        }
+
+        // After loop completion, check if we have valid code
+        if (fullCode.trim()) {
+          await UpdateCodeToDb(record.uid, fullCode);
+          setCodeResp(fullCode);
+          setIsGenerating(false);
+          setIsReady(true);
+          setGenerationProgress(100);
+          return true; // Success
+        } else {
+          throw new Error("No valid code received from stream");
+        }
+      } catch (error) {
+        console.error(`Generation attempt ${retryCount + 1} failed:`, error);
+        // If we have significant partial code but hit an error, still use what we have
+        if (fullCode.length > 500) {
+          console.log("Saving partial generation result");
+          await UpdateCodeToDb(record.uid, fullCode);
+          setCodeResp(fullCode);
+          setIsGenerating(false);
+          setIsReady(true);
+          return true; // Consider this a qualified success
+        }
+        return false; // Failure
+      }
+    };
+
     try {
-      const res = await fetch("/api/ai-model", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description: record?.description + ":" + Constants.PROMPT,
-          model: record.model,
-          imageUrl: record?.imageUrl,
-          cacheBuster: new Date().getTime(),
-        }),
-      });
+      let success = false;
 
-      if (!res.body) {
-        setLoading(false);
-        return;
+      // Try generation with retries
+      while (retryCount < MAX_RETRIES && !success) {
+        if (retryCount > 0) {
+          console.log(`Retry attempt ${retryCount}/${MAX_RETRIES}`);
+          setTemporaryCode(
+            (prev) =>
+              prev +
+              `\n\n// Retrying generation (attempt ${retryCount}/${MAX_RETRIES})...`
+          );
+        }
+
+        success = await attemptGeneration();
+        if (!success) retryCount++;
       }
 
-      let newCodeResp = "";
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let done = false;
-
-      while (!done) {
-        const { value, done: streamDone } = await reader.read();
-        done = streamDone;
-        if (value) {
-          const text = decoder.decode(value);
-          newCodeResp += text
-            .replace("```typescript", "")
-            .replace("javascript", "")
-            .replace("```", "")
-            .replace("jsx", "")
-            .replace("js", "");
-
-          setTemporaryCode(newCodeResp);
-        }
-      }
-
-      if (newCodeResp.trim().length > 0) {
-        setCodeResp(newCodeResp);
-        setIsReady(true);
-        await UpdateCodeToDb(record.uid, newCodeResp);
-      } else {
-        console.error("Generated code is empty.");
-        if (!isRetrying) {
-          handleAutoRetry();
-        }
+      if (!success) {
+        setGenerationError(
+          "Failed to generate code after multiple attempts. Please try again later."
+        );
+        setTemporaryCode(
+          (prev) =>
+            prev +
+            "\n\n// Generation failed after multiple attempts. Please try a different model or adjust your description."
+        );
       }
     } catch (error) {
-      console.error("Error generating code:", error);
-      if (!isRetrying) {
-        handleAutoRetry();
-      }
+      console.error("Final error generating code:", error);
+      setGenerationError(
+        "An unexpected error occurred during code generation."
+      );
     } finally {
+      clearInterval(keepAliveInterval);
       setLoading(false);
     }
   };
@@ -186,16 +282,15 @@ function ViewCode() {
             regenerateCode={handleRegenerateCode}
             record={record}
             isReady={isReady}
+            generationError={generationError}
           />
         </div>
         <div className="col-span-4">
-          {loading ? (
+          {loading && !isGenerating ? (
             <div className="flex flex-col items-center text-center p-20 gradient-background2 h-[80vh] rounded-xl">
               <LoaderCircle className="animate-spin text-indigo-500 h-20 w-20 mb-4" />
               <h2 className="font-bold text-4xl gradient-title">
-                {temporaryCode
-                  ? `${isRetrying ? "Retrying" : "Regenerating"} Code...`
-                  : "Analyzing The Wireframe..."}
+                Analyzing The Wireframe...
               </h2>
               <Image
                 className="mt-10 rounded-lg"
@@ -205,17 +300,14 @@ function ViewCode() {
                 width={600}
               />
             </div>
-          ) : isReady && codeResp ? (
-            <CodeEditor
-              codeResp={codeResp}
-              isReady={isReady}
-              isGenerating={loading}
-              onRetry={handleAutoRetry}
-            />
           ) : (
-            <div className="flex items-center justify-center h-[80vh] text-2xl gradient-title text-center gradient-background2 p-3 rounded-lg text-indigo-500">
-              No code available. Try regenerating.
-            </div>
+            <CodeEditor
+              codeResp={isGenerating ? temporaryCode : codeResp}
+              isReady={isReady}
+              isGenerating={isGenerating}
+              progress={generationProgress}
+              error={generationError}
+            />
           )}
         </div>
       </div>
