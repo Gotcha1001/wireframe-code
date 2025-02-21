@@ -19,32 +19,31 @@ export interface RECORD {
   uid: string;
 }
 
+interface GenerationState {
+  isComplete: boolean;
+  code: string;
+}
+
 function ViewCode() {
   const { uid } = useParams();
-  const [loading, setLoading] = useState(true); // Start with loading true
+  const [loading, setLoading] = useState(false);
   const [codeResp, setCodeResp] = useState("");
   const [record, setRecord] = useState<RECORD | null>();
   const [isReady, setIsReady] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [temporaryCode, setTemporaryCode] = useState("");
-  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [generationState, setGenerationState] = useState<GenerationState>({
+    isComplete: false,
+    code: "",
+  });
 
   useEffect(() => {
-    if (uid && !initialLoadComplete) {
-      GetRecordInfo(false);
-      setInitialLoadComplete(true);
-    }
-  }, [uid, initialLoadComplete]);
+    uid && GetRecordInfo(false);
+  }, [uid]);
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
-
-    if (forceRegenerate) {
-      setTemporaryCode("");
-      setCodeResp("");
-      setIsReady(false);
-      setIsGenerating(false);
-    }
+    resetState();
 
     try {
       const result = await axios.get("/api/wireframe-to-code?uid=" + uid);
@@ -58,11 +57,10 @@ function ViewCode() {
 
       setRecord(resp);
 
-      if (forceRegenerate || !resp?.code?.resp) {
+      if (forceRegenerate || resp?.code == null) {
         await GenerateCode(resp);
       } else {
-        // Existing code found
-        setCodeResp(resp.code.resp);
+        setCodeResp(resp?.code?.resp);
         setIsReady(true);
         setLoading(false);
       }
@@ -70,6 +68,14 @@ function ViewCode() {
       console.error("Error fetching record:", error);
       setLoading(false);
     }
+  };
+
+  const resetState = () => {
+    setTemporaryCode("");
+    setCodeResp("");
+    setIsReady(false);
+    setIsGenerating(false);
+    setGenerationState({ isComplete: false, code: "" });
   };
 
   const handleRegenerateCode = async () => {
@@ -106,7 +112,13 @@ function ViewCode() {
         const { done, value } = await reader.read();
 
         if (done) {
+          // Only save and update UI if we have valid code
           if (fullCode.trim()) {
+            setGenerationState({
+              isComplete: true,
+              code: fullCode,
+            });
+            // Only now do we save to the database
             await UpdateCodeToDb(record.uid, fullCode);
             setCodeResp(fullCode);
             setIsGenerating(false);
@@ -128,6 +140,10 @@ function ViewCode() {
       }
     } catch (error) {
       console.error("Error generating code:", error);
+      setGenerationState({
+        isComplete: false,
+        code: "",
+      });
     } finally {
       setLoading(false);
     }
@@ -163,7 +179,7 @@ function ViewCode() {
           <SelectionDetail
             regenerateCode={handleRegenerateCode}
             record={record}
-            isReady={isReady}
+            isReady={isReady && generationState.isComplete}
           />
         </div>
         <div className="col-span-4">
@@ -171,7 +187,7 @@ function ViewCode() {
             <div className="flex flex-col items-center text-center p-20 gradient-background2 h-[80vh] rounded-xl">
               <LoaderCircle className="animate-spin text-indigo-500 h-20 w-20 mb-4" />
               <h2 className="font-bold text-4xl gradient-title">
-                Loading Code...
+                Analyzing The Wireframe...
               </h2>
               <Image
                 className="mt-10 rounded-lg"
@@ -184,7 +200,7 @@ function ViewCode() {
           ) : (
             <CodeEditor
               codeResp={isGenerating ? temporaryCode : codeResp}
-              isReady={isReady}
+              isReady={isReady && generationState.isComplete}
               isGenerating={isGenerating}
             />
           )}
