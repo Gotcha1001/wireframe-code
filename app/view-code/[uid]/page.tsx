@@ -28,6 +28,8 @@ function ViewCode() {
   const [isReady, setIsReady] = useState(false);
   // New state to hold temporary code during generation
   const [temporaryCode, setTemporaryCode] = useState("");
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 3;
 
   useEffect(() => {
     uid && GetRecordInfo(false);
@@ -151,6 +153,18 @@ function ViewCode() {
     }
   };
 
+  const handleAutoRetry = () => {
+    if (retryCount < maxRetries) {
+      console.warn(`Retrying code generation... Attempt ${retryCount + 1}`);
+      setRetryCount(retryCount + 1);
+      handleRegenerateCode();
+    } else {
+      console.error(
+        "Max retry attempts reached. Please check the AI response."
+      );
+    }
+  };
+
   return (
     <div>
       <AppHeader hideSidebar={true} />
@@ -182,7 +196,12 @@ function ViewCode() {
               />
             </div>
           ) : isReady && codeResp ? (
-            <CodeEditor codeResp={codeResp} isReady={isReady} />
+            <CodeEditor
+              codeResp={codeResp}
+              isReady={isReady}
+              isGenerating={loading}
+              onRetry={handleAutoRetry}
+            />
           ) : (
             <div className="flex items-center justify-center h-[80vh] text-2xl gradient-title text-center gradient-background2 p-3 rounded-lg text-indigo-500">
               No code available. Try regenerating.

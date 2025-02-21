@@ -9,7 +9,12 @@ import {
 import { amethyst } from "@codesandbox/sandpack-themes";
 import Constants from "@/data/Constants";
 
-function CodeEditor({ codeResp, isReady, isGenerating }: any) {
+export default function CodeEditor({
+  codeResp,
+  isReady,
+  isGenerating,
+  onRetry,
+}: any) {
   // When generating, only show the editor with the streaming code
   if (isGenerating) {
     return (
@@ -21,28 +26,41 @@ function CodeEditor({ codeResp, isReady, isGenerating }: any) {
     );
   }
 
-  // When ready, show the full Sandpack environment
+  // If ready, try rendering the code
   if (isReady) {
-    return (
-      <Sandpack
-        template="react"
-        options={{
-          externalResources: ["https://cdn.tailwindcss.com"],
-          showNavigator: true,
-          showTabs: true,
-          editorHeight: 840,
-        }}
-        customSetup={{
-          dependencies: {
-            ...Constants.DEPENDANCY,
-          },
-        }}
-        theme={amethyst}
-        files={{
-          "/App.js": `${codeResp}`,
-        }}
-      />
-    );
+    try {
+      return (
+        <Sandpack
+          template="react"
+          options={{
+            externalResources: ["https://cdn.tailwindcss.com"],
+            showNavigator: true,
+            showTabs: true,
+            editorHeight: 840,
+          }}
+          customSetup={{
+            dependencies: {
+              ...Constants.DEPENDANCY,
+            },
+          }}
+          theme={amethyst}
+          files={{
+            "/App.js": `${codeResp}`,
+          }}
+        />
+      );
+    } catch (error) {
+      console.error("Sandbox error detected:", error);
+
+      // Trigger a retry if an error occurs
+      onRetry?.();
+
+      return (
+        <div className="h-[840px] bg-red-500 text-white flex items-center justify-center">
+          <p>⚠️ Error detected. Retrying code generation...</p>
+        </div>
+      );
+    }
   }
 
   // Default state - empty editor
@@ -54,5 +72,3 @@ function CodeEditor({ codeResp, isReady, isGenerating }: any) {
     </div>
   );
 }
-
-export default CodeEditor;
