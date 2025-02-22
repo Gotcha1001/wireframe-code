@@ -12,7 +12,6 @@
     "@codesandbox/sandpack-react": "^2.20.0",
     "@codesandbox/sandpack-themes": "^2.0.21",
     "@neondatabase/serverless": "^0.10.4",
-    "@netlify/plugin-nextjs": "^5.9.4",
     "@radix-ui/react-dialog": "^1.1.5",
     "@radix-ui/react-popover": "^1.1.5",
     "@radix-ui/react-select": "^2.1.6",
