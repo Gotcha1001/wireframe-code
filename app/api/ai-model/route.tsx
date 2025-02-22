@@ -2,199 +2,120 @@ import Constants from "@/data/Constants";
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
 
-export const runtime = "edge";
-
-// Configuration constants
-const CONFIG = {
-  CHUNK_SIZE: 2000, // Smaller chunks for better reliability
-  CHUNK_TIMEOUT: 15000, // 15 seconds timeout per chunk
-  MAX_RETRIES: 3,
-  CONCURRENT_CHUNKS: 2, // Process chunks in parallel but limited
-  BACKOFF_INITIAL: 1000, // 1 second initial backoff
-  MAX_TOKENS_PER_CHUNK: 500, // Limit token generation per chunk
-  KEEP_ALIVE_INTERVAL: 5000, // Send keep-alive every 5 seconds
-} as const;
-
-// Configure OpenAI client with timeout
 const openai = new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTE_AI_API_KEY,
-  timeout: CONFIG.CHUNK_TIMEOUT,
-  maxRetries: CONFIG.MAX_RETRIES,
 });
 
-// Enhanced chunk splitting with token estimation
-function splitTextIntoChunks(text: string): string[] {
-  const chunks: string[] = [];
-  let currentChunk = "";
+export async function POST(req: NextRequest) {
+  const { model, description, imageUrl } = await req.json();
 
-  const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+  const ModelObj = Constants.AiModelList.find((item) => item.name == model);
+  const modelName = ModelObj?.modelName;
 
-  const sentences = text.split(/(?<=[.!?])\s+/);
+  console.log("Using model:", modelName);
 
-  for (const sentence of sentences) {
-    const potentialChunk = currentChunk + (currentChunk ? " " : "") + sentence;
-
-    if (
-      potentialChunk.length <= CONFIG.CHUNK_SIZE &&
-      estimateTokens(potentialChunk) <= CONFIG.MAX_TOKENS_PER_CHUNK
-    ) {
-      currentChunk = potentialChunk;
-    } else {
-      if (currentChunk) chunks.push(currentChunk.trim());
-      currentChunk = sentence;
-    }
-  }
-
-  if (currentChunk) chunks.push(currentChunk.trim());
-  return chunks;
-}
-
-// Process each chunk with retries
-async function* processChunk(
-  chunk: string,
-  modelName: string,
-  imageUrl?: string,
-  isFirstChunk: boolean = false,
-  retryCount: number = 0
-): AsyncGenerator<{ index: number; text: string }> {
   try {
     const response = await openai.chat.completions.create({
-      model: modelName,
+      model: modelName ?? "google/gemini-2.0-pro-exp-02-05:free",
       stream: true,
-      max_tokens: CONFIG.MAX_TOKENS_PER_CHUNK,
+      max_tokens: 4000, // Set a reasonable token limit
+      temperature: 0.7,
       messages: [
         {
           role: "user",
           content: [
-            { type: "text", text: chunk },
-            ...(isFirstChunk && imageUrl
-              ? [{ type: "image_url" as const, image_url: { url: imageUrl } }]
-              : []),
+            {
+              type: "text",
+              text: description,
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: imageUrl,
+              },
+            },
           ],
         },
       ],
     });
 
-    for await (const part of response) {
-      if (part.choices?.length > 0) {
-        const text = part.choices[0].delta?.content || "";
-        yield { index: retryCount, text };
-      }
-    }
-  } catch (error) {
-    if (retryCount < CONFIG.MAX_RETRIES) {
-      const backoffTime = CONFIG.BACKOFF_INITIAL * Math.pow(2, retryCount);
-      await new Promise((resolve) => setTimeout(resolve, backoffTime));
-      yield* processChunk(
-        chunk,
-        modelName,
-        imageUrl,
-        isFirstChunk,
-        retryCount + 1
-      );
-    } else {
-      yield {
-        index: retryCount,
-        text: `Error processing chunk: ${String(error)}`,
-      };
-    }
-  }
-}
-
-// Process chunks in parallel
-async function* processChunksInParallel(
-  chunks: string[],
-  modelName: string,
-  imageUrl?: string
-): AsyncGenerator<{ index: number; text?: string; error?: string }> {
-  const queue = chunks.map((chunk, index) => ({
-    chunk,
-    index,
-    isFirstChunk: index === 0,
-  }));
-
-  while (queue.length > 0) {
-    const batch = queue.splice(0, CONFIG.CONCURRENT_CHUNKS);
-    const results = await Promise.all(
-      batch.map(async (task) => {
+    // Create a readable stream with chunking and better error handling
+    const stream = new ReadableStream({
+      async start(controller) {
         try {
-          let accumulatedText = "";
-          for await (const part of processChunk(
-            task.chunk,
-            modelName,
-            imageUrl,
-            task.isFirstChunk
-          )) {
-            accumulatedText += part.text;
+          let buffer = "";
+          const CHUNK_SIZE = 1024; // Send in ~1KB chunks
+          let chunkCount = 0;
+          let totalSent = 0;
+
+          for await (const chunk of response) {
+            chunkCount++;
+            const text = chunk.choices?.[0]?.delta?.content || "";
+            buffer += text;
+            totalSent += text.length;
+
+            // Send complete chunks when buffer gets large enough
+            if (buffer.length >= CHUNK_SIZE) {
+              controller.enqueue(new TextEncoder().encode(buffer));
+              buffer = "";
+
+              // Log progress periodically
+              if (chunkCount % 50 === 0) {
+                console.log(
+                  `Streaming in progress, sent ${chunkCount} chunks (${totalSent} chars)`
+                );
+              }
+            }
           }
-          return { index: task.index, text: accumulatedText };
+
+          // Send any remaining text in buffer
+          if (buffer.length > 0) {
+            controller.enqueue(new TextEncoder().encode(buffer));
+          }
+
+          console.log(
+            `Stream completed successfully, sent ${chunkCount} total chunks (${totalSent} total chars)`
+          );
+          controller.close();
         } catch (error) {
-          console.error(`Error processing chunk ${task.index}:`, error);
-          return { index: task.index, error: String(error) };
-        }
-      })
-    );
-
-    for (const result of results) {
-      yield result;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
-
-// Handle POST request
-export async function POST(req: NextRequest) {
-  const { model, description, imageUrl } = await req.json();
-
-  const ModelObj = Constants.AiModelList.find((item) => item.name === model);
-  const modelName =
-    ModelObj?.modelName ?? "google/gemini-2.0-pro-exp-02-05:free";
-
-  const chunks = splitTextIntoChunks(description);
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      let lastKeepAlive = Date.now();
-
-      const keepAliveInterval = setInterval(() => {
-        if (Date.now() - lastKeepAlive >= CONFIG.KEEP_ALIVE_INTERVAL) {
-          controller.enqueue(new TextEncoder().encode(" "));
-          lastKeepAlive = Date.now();
-        }
-      }, CONFIG.KEEP_ALIVE_INTERVAL);
-
-      try {
-        for await (const { index, text, error } of processChunksInParallel(
-          chunks,
-          modelName,
-          imageUrl
-        )) {
-          if (error) {
+          console.error("Stream processing error:", error);
+          try {
+            // Try to send error info to client
             controller.enqueue(
               new TextEncoder().encode(
-                `\nError in part ${index + 1}: ${error}. Continuing...\n`
+                "\n\n// ERROR: Stream interrupted, partial code only"
               )
             );
-          } else {
-            controller.enqueue(new TextEncoder().encode(text));
-            lastKeepAlive = Date.now();
+          } catch (e) {
+            // Just log if we can't send error
+            console.error("Failed to send error message to client:", e);
           }
+          controller.close();
         }
-      } catch (error) {
-        console.error("Fatal error:", error);
-        controller.enqueue(
-          new TextEncoder().encode(`\nFatal error: ${String(error)}`)
-        );
-      } finally {
-        clearInterval(keepAliveInterval);
-        controller.close();
-      }
-    },
-  });
+      },
+    });
 
-  return new Response(stream, {
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-  });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "Transfer-Encoding": "chunked",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch (error) {
+    console.error("API error:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to generate code",
+        details: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
 }

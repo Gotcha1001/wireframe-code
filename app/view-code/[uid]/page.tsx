@@ -18,6 +18,7 @@ export interface RECORD {
   model: string;
   createdBy: string;
   uid: string;
+  retryCount?: number;
 }
 
 function ViewCode() {
@@ -35,22 +36,6 @@ function ViewCode() {
   useEffect(() => {
     uid && GetRecordInfo(false);
   }, [uid]);
-
-  // Function to check if code appears complete
-  const checkCodeCompleteness = (code: string): boolean => {
-    // Check for common indicators of complete React component code
-    const hasExportDefault = code.includes("export default");
-    const hasClosingBracket = code.trim().endsWith("}");
-    const hasReturnStatement = code.includes("return");
-    const hasJSXClosingTags = code.includes("</div>") || code.includes("/>");
-
-    return (
-      hasExportDefault &&
-      hasClosingBracket &&
-      hasReturnStatement &&
-      hasJSXClosingTags
-    );
-  };
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
@@ -149,64 +134,120 @@ function ViewCode() {
       let fullCode = "";
       let receivedChunks = 0;
       let lastChunkTime = Date.now();
+      let noDataTimeout = 45000; // 45 seconds timeout
+      let completenessCheckDelay = 2000; // 2 seconds delay for final completeness check
+      let isStreaming = true;
 
-      while (true) {
+      while (isStreaming) {
         // Check for long periods of inactivity
-        if (Date.now() - lastChunkTime > 45000) {
-          // 45 seconds without data
-          throw new Error("Stream timeout - no data received for 45 seconds");
+        if (Date.now() - lastChunkTime > noDataTimeout) {
+          throw new Error(
+            `Stream timeout - no data received for ${
+              noDataTimeout / 1000
+            } seconds`
+          );
         }
 
-        const { done, value } = await reader.read();
+        try {
+          const { done, value } = await reader.read();
 
-        if (done) break;
+          if (done) {
+            isStreaming = false;
+            // Wait briefly before final completeness check
+            await new Promise((resolve) =>
+              setTimeout(resolve, completenessCheckDelay)
+            );
+            break;
+          }
 
-        lastChunkTime = Date.now();
-        receivedChunks++;
+          lastChunkTime = Date.now();
+          receivedChunks++;
 
-        const text = decoder
-          .decode(value, { stream: true })
-          .replace("```typescript", "")
-          .replace("javascript", "")
-          .replace("```", "")
-          .replace("jsx", "")
-          .replace("js", "");
+          const text = decoder
+            .decode(value, { stream: true })
+            .replace("```typescript", "")
+            .replace("javascript", "")
+            .replace("```", "")
+            .replace("jsx", "")
+            .replace("js", "");
 
-        fullCode += text;
-        setTemporaryCode(fullCode);
+          fullCode += text;
+          setTemporaryCode(fullCode);
 
-        // Update progress based on code completeness
-        const estimatedProgress = Math.min(
-          95,
-          Math.floor((receivedChunks / 50) * 100)
-        );
-        setGenerationProgress(estimatedProgress);
+          // Update progress based on code completeness and received chunks
+          const estimatedProgress = Math.min(
+            95,
+            Math.floor((receivedChunks / 30) * 100) // Adjusted chunk count expectation
+          );
+          setGenerationProgress(estimatedProgress);
 
-        // Check if code appears complete
-        if (checkCodeCompleteness(fullCode)) {
-          setIsCodeComplete(true);
-          break;
+          // Continuously check for code completeness
+          if (checkCodeCompleteness(fullCode)) {
+            setIsCodeComplete(true);
+          }
+        } catch (streamError) {
+          console.error("Stream reading error:", streamError);
+          // Don't throw here - let the stream try to continue
         }
       }
 
-      // Only save and display if code is complete
-      if (isCodeComplete) {
+      // Final completeness check after stream ends
+      const isComplete = checkCodeCompleteness(fullCode);
+      setIsCodeComplete(isComplete);
+
+      if (isComplete && fullCode.length > 0) {
         await UpdateCodeToDb(record.uid, fullCode);
         setCodeResp(fullCode);
         setIsGenerating(false);
         setIsReady(true);
         setGenerationProgress(100);
       } else {
-        throw new Error("Code generation did not complete successfully");
+        // If code is incomplete, retry once before giving up
+        if (!record.retryCount || record.retryCount < 1) {
+          console.log("Code appears incomplete, attempting retry...");
+          await GenerateCode({ ...record, retryCount: 1 });
+          return;
+        }
+        throw new Error("Code generation incomplete after retry");
       }
     } catch (error) {
       console.error("Error generating code:", error);
-      setGenerationError("Code generation incomplete. Please try again.");
+      setGenerationError(
+        error instanceof Error
+          ? `Generation error: ${error.message}`
+          : "Code generation failed. Please try again."
+      );
       setIsGenerating(false);
     } finally {
       clearInterval(keepAliveInterval);
       setLoading(false);
     }
+  };
+
+  // Improved code completeness checking
+  const checkCodeCompleteness = (code: string): boolean => {
+    if (!code || code.length < 50) return false;
+
+    const indicators = {
+      hasExportDefault: /export\s+default/.test(code),
+      hasClosingBracket: code.trim().endsWith("}"),
+      hasReturnStatement: /return\s*\(?\s*/.test(code),
+      hasJSXClosingTags: /<\/\w+>/.test(code) || /\/>/.test(code),
+      hasFunctionDeclaration: /function|const\s+\w+\s*=/.test(code),
+      hasReactImport: /import.*React/.test(code),
+      hasBalancedBraces:
+        (code.match(/{/g) || []).length === (code.match(/}/g) || []).length,
+    };
+
+    // Code must have at least 5 of these indicators to be considered complete
+    const requiredIndicators =
+      Object.values(indicators).filter(Boolean).length >= 5;
+
+    // Additional structural checks
+    const hasBasicStructure =
+      code.includes("import") && code.includes("return") && code.length > 200;
+
+    return requiredIndicators && hasBasicStructure;
   };
 
   const UpdateCodeToDb = async (uid: string, code: string) => {
