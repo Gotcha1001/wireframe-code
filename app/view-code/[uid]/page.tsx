@@ -1,8 +1,9 @@
 "use client";
+
 import AppHeader from "@/app/_components/AppHeader";
 import Constants from "@/data/Constants";
 import axios from "axios";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useParams } from "next/navigation";
 import React, { useEffect, useState } from "react";
 import SelectionDetail from "./_components/SelectionDetail";
@@ -55,7 +56,6 @@ function ViewCode() {
 
       setRecord(resp);
 
-      // If the record code is not found or needs to be regenerated
       if (forceRegenerate || resp?.code == null) {
         await GenerateCode(resp);
       } else {
@@ -75,180 +75,71 @@ function ViewCode() {
     await GetRecordInfo(true);
   };
 
-  // Keep-alive helper function
-  const pingServer = async () => {
-    try {
-      await fetch("/api/ping", {
-        method: "GET",
-        headers: { "Cache-Control": "no-cache" },
-      });
-    } catch (e) {
-      console.log("Keep-alive ping error:", e);
-    }
-  };
-
   const GenerateCode = async (record: RECORD) => {
     setLoading(true);
     setIsGenerating(true);
     setGenerationError("");
-    let fullCode = "";
-    let retryCount = 0;
-    const MAX_RETRIES = 3;
-
-    // Set up keep-alive ping to prevent connection timeouts
-    const keepAliveInterval = setInterval(pingServer, 30000); // Every 30 seconds
-
-    const attemptGeneration = async () => {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
-
-        const res = await fetch("/api/ai-model", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Connection: "keep-alive",
-          },
-          body: JSON.stringify({
-            description: record?.description + ":" + Constants.PROMPT,
-            model: record.model,
-            imageUrl: record?.imageUrl,
-            cacheBuster: new Date().getTime(),
-          }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!res.ok) {
-          throw new Error(`API responded with status: ${res.status}`);
-        }
-
-        if (!res.body) {
-          throw new Error("Response body is null");
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-
-        // Process the stream with timeout protection
-        let doneReading = false;
-        let lastChunkTime = Date.now();
-        let receivedChunks = 0;
-
-        while (!doneReading) {
-          // Check for stream inactivity timeout
-          if (Date.now() - lastChunkTime > 45000) {
-            // 45 seconds without data
-            if (fullCode.length > 500) {
-              // We have substantial code, save what we have and exit
-              console.log(
-                "Stream timeout but substantial code received. Saving partial result."
-              );
-              break;
-            } else {
-              throw new Error(
-                "Stream timeout - no data received for 45 seconds"
-              );
-            }
-          }
-
-          const { done, value } = await reader.read();
-          lastChunkTime = Date.now();
-
-          if (done) {
-            doneReading = true;
-          } else {
-            receivedChunks++;
-            const text = decoder
-              .decode(value, { stream: true })
-              .replace("```typescript", "")
-              .replace("javascript", "")
-              .replace("```", "")
-              .replace("jsx", "")
-              .replace("js", "");
-
-            fullCode += text;
-            setTemporaryCode(fullCode);
-
-            // Update progress based on lines (rough estimate)
-            const lineCount = fullCode.split("\n").length;
-            const estimatedProgress = Math.min(
-              95,
-              Math.floor((lineCount / 300) * 100)
-            );
-            setGenerationProgress(estimatedProgress);
-
-            // Log progress periodically
-            if (receivedChunks % 20 === 0) {
-              console.log(
-                `Received ${receivedChunks} chunks, ~${lineCount} lines of code`
-              );
-            }
-          }
-        }
-
-        // After loop completion, check if we have valid code
-        if (fullCode.trim()) {
-          await UpdateCodeToDb(record.uid, fullCode);
-          setCodeResp(fullCode);
-          setIsGenerating(false);
-          setIsReady(true);
-          setGenerationProgress(100);
-          return true; // Success
-        } else {
-          throw new Error("No valid code received from stream");
-        }
-      } catch (error) {
-        console.error(`Generation attempt ${retryCount + 1} failed:`, error);
-        // If we have significant partial code but hit an error, still use what we have
-        if (fullCode.length > 500) {
-          console.log("Saving partial generation result");
-          await UpdateCodeToDb(record.uid, fullCode);
-          setCodeResp(fullCode);
-          setIsGenerating(false);
-          setIsReady(true);
-          return true; // Consider this a qualified success
-        }
-        return false; // Failure
-      }
-    };
 
     try {
-      let success = false;
+      const res = await fetch("/api/ai-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: record?.description + ":" + Constants.PROMPT,
+          model: record.model,
+          imageUrl: record?.imageUrl,
+          cacheBuster: new Date().getTime(),
+        }),
+      });
 
-      // Try generation with retries
-      while (retryCount < MAX_RETRIES && !success) {
-        if (retryCount > 0) {
-          console.log(`Retry attempt ${retryCount}/${MAX_RETRIES}`);
-          setTemporaryCode(
-            (prev) =>
-              prev +
-              `\n\n// Retrying generation (attempt ${retryCount}/${MAX_RETRIES})...`
-          );
-        }
-
-        success = await attemptGeneration();
-        if (!success) retryCount++;
+      if (!res.body) {
+        throw new Error("Response body is null");
       }
 
-      if (!success) {
-        setGenerationError(
-          "Failed to generate code after multiple attempts. Please try again later."
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let fullCode = "";
+      let receivedChunks = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        receivedChunks++;
+        const text = decoder
+          .decode(value, { stream: true })
+          .replace("```typescript", "")
+          .replace("javascript", "")
+          .replace("```", "")
+          .replace("jsx", "")
+          .replace("js", "");
+
+        fullCode += text;
+        setTemporaryCode(fullCode);
+
+        // Update progress based on lines
+        const lineCount = fullCode.split("\n").length;
+        const estimatedProgress = Math.min(
+          95,
+          Math.floor((lineCount / 300) * 100)
         );
-        setTemporaryCode(
-          (prev) =>
-            prev +
-            "\n\n// Generation failed after multiple attempts. Please try a different model or adjust your description."
-        );
+        setGenerationProgress(estimatedProgress);
       }
+
+      // Final updates after generation is complete
+      await UpdateCodeToDb(record.uid, fullCode);
+      setCodeResp(fullCode);
+      setIsGenerating(false);
+      setIsReady(true);
+      setGenerationProgress(100);
     } catch (error) {
-      console.error("Final error generating code:", error);
+      console.error("Error generating code:", error);
       setGenerationError(
-        "An unexpected error occurred during code generation."
+        "An error occurred during code generation. Please try again."
       );
+      setIsGenerating(false);
     } finally {
-      clearInterval(keepAliveInterval);
       setLoading(false);
     }
   };
@@ -267,6 +158,7 @@ function ViewCode() {
         codeResp: codeToSave,
         forcedUpdate: true,
       });
+
       console.log("Update result:", result.data);
     } catch (error) {
       console.error("Error updating code:", error);
