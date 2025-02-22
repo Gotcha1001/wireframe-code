@@ -30,10 +30,27 @@ function ViewCode() {
   const [temporaryCode, setTemporaryCode] = useState("");
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationError, setGenerationError] = useState("");
+  const [isCodeComplete, setIsCodeComplete] = useState(false);
 
   useEffect(() => {
     uid && GetRecordInfo(false);
   }, [uid]);
+
+  // Function to check if code appears complete
+  const checkCodeCompleteness = (code: string): boolean => {
+    // Check for common indicators of complete React component code
+    const hasExportDefault = code.includes("export default");
+    const hasClosingBracket = code.trim().endsWith("}");
+    const hasReturnStatement = code.includes("return");
+    const hasJSXClosingTags = code.includes("</div>") || code.includes("/>");
+
+    return (
+      hasExportDefault &&
+      hasClosingBracket &&
+      hasReturnStatement &&
+      hasJSXClosingTags
+    );
+  };
 
   const GetRecordInfo = async (forceRegenerate = false) => {
     setLoading(true);
@@ -43,6 +60,7 @@ function ViewCode() {
     setIsGenerating(false);
     setGenerationError("");
     setGenerationProgress(0);
+    setIsCodeComplete(false);
 
     try {
       const result = await axios.get(`/api/wireframe-to-code?uid=${uid}`);
@@ -59,8 +77,15 @@ function ViewCode() {
       if (forceRegenerate || resp?.code == null) {
         await GenerateCode(resp);
       } else {
-        setCodeResp(resp?.code?.resp);
-        setIsReady(true);
+        // Check if existing code is complete
+        if (checkCodeCompleteness(resp?.code?.resp)) {
+          setCodeResp(resp?.code?.resp);
+          setIsReady(true);
+          setIsCodeComplete(true);
+        } else {
+          // If existing code is incomplete, regenerate
+          await GenerateCode(resp);
+        }
         setLoading(false);
       }
     } catch (error) {
@@ -75,22 +100,45 @@ function ViewCode() {
     await GetRecordInfo(true);
   };
 
+  // Keep-alive ping to prevent timeouts
+  const startKeepAlive = () => {
+    const interval = setInterval(() => {
+      fetch("/api/ping", {
+        method: "GET",
+        headers: { "Cache-Control": "no-cache" },
+      }).catch(console.error);
+    }, 30000); // Ping every 30 seconds
+    return interval;
+  };
+
   const GenerateCode = async (record: RECORD) => {
     setLoading(true);
     setIsGenerating(true);
     setGenerationError("");
+    setIsCodeComplete(false);
+
+    const keepAliveInterval = startKeepAlive();
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
+
       const res = await fetch("/api/ai-model", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Connection: "keep-alive",
+        },
         body: JSON.stringify({
           description: record?.description + ":" + Constants.PROMPT,
           model: record.model,
           imageUrl: record?.imageUrl,
           cacheBuster: new Date().getTime(),
         }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!res.body) {
         throw new Error("Response body is null");
@@ -100,13 +148,22 @@ function ViewCode() {
       const decoder = new TextDecoder();
       let fullCode = "";
       let receivedChunks = 0;
+      let lastChunkTime = Date.now();
 
       while (true) {
+        // Check for long periods of inactivity
+        if (Date.now() - lastChunkTime > 45000) {
+          // 45 seconds without data
+          throw new Error("Stream timeout - no data received for 45 seconds");
+        }
+
         const { done, value } = await reader.read();
 
         if (done) break;
 
+        lastChunkTime = Date.now();
         receivedChunks++;
+
         const text = decoder
           .decode(value, { stream: true })
           .replace("```typescript", "")
@@ -118,34 +175,42 @@ function ViewCode() {
         fullCode += text;
         setTemporaryCode(fullCode);
 
-        // Update progress based on lines
-        const lineCount = fullCode.split("\n").length;
+        // Update progress based on code completeness
         const estimatedProgress = Math.min(
           95,
-          Math.floor((lineCount / 300) * 100)
+          Math.floor((receivedChunks / 50) * 100)
         );
         setGenerationProgress(estimatedProgress);
+
+        // Check if code appears complete
+        if (checkCodeCompleteness(fullCode)) {
+          setIsCodeComplete(true);
+          break;
+        }
       }
 
-      // Final updates after generation is complete
-      await UpdateCodeToDb(record.uid, fullCode);
-      setCodeResp(fullCode);
-      setIsGenerating(false);
-      setIsReady(true);
-      setGenerationProgress(100);
+      // Only save and display if code is complete
+      if (isCodeComplete) {
+        await UpdateCodeToDb(record.uid, fullCode);
+        setCodeResp(fullCode);
+        setIsGenerating(false);
+        setIsReady(true);
+        setGenerationProgress(100);
+      } else {
+        throw new Error("Code generation did not complete successfully");
+      }
     } catch (error) {
       console.error("Error generating code:", error);
-      setGenerationError(
-        "An error occurred during code generation. Please try again."
-      );
+      setGenerationError("Code generation incomplete. Please try again.");
       setIsGenerating(false);
     } finally {
+      clearInterval(keepAliveInterval);
       setLoading(false);
     }
   };
 
   const UpdateCodeToDb = async (uid: string, code: string) => {
-    if (!uid || !code) return;
+    if (!uid || !code || !isCodeComplete) return;
 
     try {
       const codeToSave = {
@@ -165,6 +230,7 @@ function ViewCode() {
     }
   };
 
+  // Rest of the component remains the same...
   return (
     <div>
       <AppHeader hideSidebar={true} />
@@ -199,6 +265,7 @@ function ViewCode() {
               isGenerating={isGenerating}
               progress={generationProgress}
               error={generationError}
+              isCodeComplete={isCodeComplete}
             />
           )}
         </div>

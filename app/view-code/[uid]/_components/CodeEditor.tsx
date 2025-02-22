@@ -16,6 +16,7 @@ interface CodeEditorProps {
   isGenerating: boolean;
   progress?: number;
   error?: string;
+  isCodeComplete?: boolean;
 }
 
 function CodeEditor({
@@ -24,6 +25,7 @@ function CodeEditor({
   isGenerating,
   progress = 0,
   error = "",
+  isCodeComplete = false,
 }: CodeEditorProps) {
   const lineCount = codeResp.split("\n").length;
 
@@ -40,7 +42,7 @@ function CodeEditor({
             ) : (
               <span className="flex items-center">
                 <span className="animate-pulse mr-2">●</span>
-                Generating Code...
+                {isCodeComplete ? "Finalizing Code..." : "Generating Code..."}
               </span>
             )}
           </div>
@@ -64,23 +66,21 @@ function CodeEditor({
             {codeResp}
           </pre>
 
-          {/* Indicator at bottom when generating is ongoing */}
-          {!error && progress < 95 && (
+          {/* Status messages */}
+          {!error && !isCodeComplete && progress < 95 && (
             <div className="p-3 text-indigo-300 text-sm italic border-t border-indigo-900/50 bg-indigo-900/20">
               <span className="animate-pulse mr-2">●</span>
               Stream is active, receiving code...
             </div>
           )}
 
-          {/* Show completed message when at 100% */}
-          {progress >= 95 && !error && (
+          {isCodeComplete && !error && (
             <div className="p-3 text-green-300 text-sm flex items-center border-t border-green-900/50 bg-green-900/20">
               <CheckCircle2 className="h-4 w-4 mr-2" />
               Code generation complete! Preparing sandbox...
             </div>
           )}
 
-          {/* Show error message if there was a problem */}
           {error && (
             <div className="p-3 text-red-300 text-sm border-t border-red-900/50 bg-red-900/20">
               {error}
@@ -95,7 +95,7 @@ function CodeEditor({
   }
 
   // When ready, show the full Sandpack environment
-  if (isReady) {
+  if (isReady && isCodeComplete) {
     return (
       <Sandpack
         template="react"
@@ -118,11 +118,13 @@ function CodeEditor({
     );
   }
 
-  // Default state - empty editor
+  // Default state - empty editor or waiting for completion
   return (
     <div className="h-[840px] bg-[#191259] rounded-lg overflow-hidden">
       <div className="h-full flex items-center justify-center text-white">
-        Waiting for code...
+        {isReady && !isCodeComplete
+          ? "Waiting for code generation to complete..."
+          : "Waiting for code..."}
       </div>
     </div>
   );
